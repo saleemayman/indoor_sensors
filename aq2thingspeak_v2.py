@@ -10,12 +10,14 @@ from tinkerforge.bricklet_air_quality import BrickletAirQuality
 from tinkerforge.bricklet_air_quality import BrickletAirQuality
 from tinkerforge.bricklet_humidity_v2 import BrickletHumidityV2
 from tinkerforge.bricklet_temperature_ir_v2 import BrickletTemperatureIRV2
+from tinkerforge.bricklet_co2_v2 import BrickletCO2V2
 
 HOST = "localhost"
 PORT = 4223
-UID_AQ = "JvC" # UID of Air Quality Bricklet
-UID_HM = "Lmp" # UID of Humidity sensor
-UID_IT = "Ls8" # UID of IR temperature sensor
+UID_AIQ = "JvC" # UID of Air Quality Bricklet
+UID_HUM = "Lmp" # UID of Humidity sensor
+UID_IRT = "Ls8" # UID of IR temperature sensor
+UID_CO2 = "Mez" # UID of CO2 sesnor
 
 WRITE_KEY = 'IRU3WSAU1W85X8LJ' # PUT CHANNEL ID HERE
 BASE_URL = 'https://api.thingspeak.com/update?api_key={}'.format(WRITE_KEY)
@@ -28,6 +30,7 @@ CURRENT_SENSOR_DATA = dict(TSTAMP=[], AVG_TEMP=[], AVG_RH=[], SP=[], OBJ_TEMP=[]
 CURRENT_AQ_DATA = dict(TEMP=[], RH=[], SP=[], IAQIDX=[], IAQ_ACC=[])
 CURRENT_HUM_DATA = dict(TEMP=[], RH=[])
 CURRENT_IRT_DATA = dict(OBJ_TEMP=[], AMB_TEMP=[])
+CURRENT_CO2_DATA = dict(CO2_PPM=[], TEMP=[], RH=[])
 
 START_TIME = datetime.now()
 
@@ -82,6 +85,13 @@ def cb_humidity_temperature(temperature):
     except:
         print("[Humidity Sensor] - Could not retrieve temperature from sensor!")
 
+def cb_all_values_co2(co2_concentration, temperature, humidity):
+    try:
+        CURRENT_CO2_DATA['CO2_PPM'].append(co2_concentration)
+        CURRENT_CO2_DATA['TEMP'].append(temperature/100)
+        CURRENT_CO2_DATA['RH'].append(humidity/100)
+    except:
+        print("[CO2 Sensor] - Could not retrieve temperature from sensor!")
 
 def getWindowedMean(window_data):
     mean_data = {}
@@ -96,9 +106,9 @@ def getWindowedMean(window_data):
 
 def writeToCloud(data_to_write):
     sensor_data_str = '&field1={}&field2={}&field3={}&field4={}&field5={}&field6={}&field7={}&field8={}'.format(
-                        data_to_write['TSTAMP'], data_to_write['AVG_TEMP'], data_to_write['AVG_RH'], data_to_write['SP'],
+                        data_to_write['CO2_PPM'], data_to_write['AVG_TEMP'], data_to_write['AVG_RH'], data_to_write['SP'],
                         data_to_write['OBJ_TEMP'], data_to_write['AMB_TEMP'], data_to_write['IAQIDX'], data_to_write['IAQ_ACC'])
-    print('Posting: [{} : {} : {} : {} : {} : {} : {} : {}]'.format(data_to_write['TSTAMP'], 
+    print('Posting: [{} : {} : {} : {} : {} : {} : {} : {}]'.format(data_to_write['CO2_PPM'], 
                                                                     data_to_write['AVG_TEMP'], 
                                                                     data_to_write['AVG_RH'], 
                                                                     data_to_write['SP'], 
@@ -127,13 +137,18 @@ if __name__ == "__main__":
         ipcon.register_callback(ipcon.CALLBACK_CONNECTED, cb_connected)
 
         # create sensor device object
-        aq = BrickletAirQuality(UID_AQ, ipcon)
-        hm = BrickletHumidityV2(UID_HM, ipcon)
-        it = BrickletTemperatureIRV2(UID_IT, ipcon)
+        aq = BrickletAirQuality(UID_AIQ, ipcon)
+        hm = BrickletHumidityV2(UID_HUM, ipcon)
+        it = BrickletTemperatureIRV2(UID_IRT, ipcon)
+        co2 = BrickletCO2V2(UID_CO2, ipcon)
 
-
+        # air quality callback config
         aq.register_callback(aq.CALLBACK_ALL_VALUES, cb_all_values_AQ)
         aq.set_all_values_callback_configuration(CALLBACK_PERIOD, False)
+        
+        # co2 callback config
+        co2.register_callback(co2.CALLBACK_ALL_VALUES, cb_all_values_co2)
+        co2.set_all_values_callback_configuration(CALLBACK_PERIOD, False)
 
         # callback for humidity sensor
         hm.register_callback(hm.CALLBACK_HUMIDITY, cb_humidity_rhumidity)
@@ -164,12 +179,13 @@ if __name__ == "__main__":
                 aq_mean = getWindowedMean(CURRENT_AQ_DATA)
                 hm_mean = getWindowedMean(CURRENT_HUM_DATA)
                 it_mean = getWindowedMean(CURRENT_IRT_DATA)
+                co2_mean = getWindowedMean(CURRENT_CO2_DATA)
                 
                 # aggregate for current timestamp
-                data_for_upload = dict( TSTAMP=timestamp, 
-                                        AVG_TEMP=float(np.format_float_positional( stats.mean( [aq_mean['TEMP'], hm_mean['TEMP']] ), 
+                data_for_upload = dict( CO2_PPM=co2_mean['CO2_PPM'], 
+                                        AVG_TEMP=float(np.format_float_positional( stats.mean( [aq_mean['TEMP'], hm_mean['TEMP'], co2_mean['TEMP']] ), 
                                                         precision=4, unique=False, fractional=False, trim='k') ), 
-                                        AVG_RH=float(np.format_float_positional( stats.mean( [aq_mean['RH'], hm_mean['RH']] ), 
+                                        AVG_RH=float(np.format_float_positional( stats.mean( [aq_mean['RH'], hm_mean['RH'], co2_mean['RH']] ), 
                                                         precision=4, unique=False, fractional=False, trim='k') ),
                                         SP=aq_mean['SP'], 
                                         OBJ_TEMP=it_mean['OBJ_TEMP'], 
@@ -184,8 +200,8 @@ if __name__ == "__main__":
                 CURRENT_AQ_DATA = dict(TEMP=[], RH=[], SP=[], IAQIDX=[], IAQ_ACC=[])
                 CURRENT_HUM_DATA = dict(TEMP=[], RH=[])
                 CURRENT_IRT_DATA = dict(OBJ_TEMP=[], AMB_TEMP=[])
+                CURRENT_CO2_DATA = dict(CO2_PPM=[], TEMP=[], RH=[])
 
-        # input("Press key to exit\n") # Use raw_input() in Python 2
         ipcon.disconnect()
     except:
         print("Something went wrong. Sleeping for 15 secs to restart . . . \n")
